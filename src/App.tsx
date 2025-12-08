@@ -2,7 +2,7 @@ import { useState } from "react";
 import "./App.css";
 
 function App() {
-  const [input, setInput] = useState("lazvell, stylishnoob4");
+  const [input, setInput] = useState("techkun3, randoku");
 
   const channels = input
     .split(",")
@@ -36,7 +36,7 @@ function App() {
           <div key={channel} className="cell">
             <div className="cell-header">{channel}</div>
             <iframe
-              src={`https://player.twitch.tv/?channel=${channel}&parent=localhost&muted=true`}
+              src={`https://player.twitch.tv/?channel=${channel}&parent=viewer.twi-twi.com&muted=true`}
               frameBorder="0"
               allowFullScreen
             ></iframe>
