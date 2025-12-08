@@ -9,6 +9,10 @@ function App() {
     .map((c) => c.trim())
     .filter(Boolean);
 
+  // ここで現在アクセスしているホスト名を使う
+  const hostname = window.location.hostname;
+  const parents = [hostname, "twi-twi-viewer.pages.dev"]; // 念のためPagesドメインも許可
+
   return (
     <div className="app">
       <header>
@@ -36,10 +40,18 @@ function App() {
           <div key={channel} className="cell">
             <div className="cell-header">{channel}</div>
             <iframe
-              src={`https://player.twitch.tv/?channel=${channel}&parent=viewer.twi-twi.com&muted=true`}
+              src={
+                `https://player.twitch.tv/?channel=${encodeURIComponent(
+                  channel
+                )}` +
+                parents
+                  .map((p) => `&parent=${encodeURIComponent(p)}`)
+                  .join("") +
+                "&muted=true"
+              }
               frameBorder="0"
               allowFullScreen
-            ></iframe>
+            />
           </div>
         ))}
       </main>
