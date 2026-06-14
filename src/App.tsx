@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import "./App.css";
 import type { ActiveStream, PlayerLayout } from "./types";
 
-const maxStreams = 8;
+const maxStreams = 6;
 
 const layoutOptions: { id: PlayerLayout; label: string }[] = [
   { id: "grid_equal", label: "Auto" },
