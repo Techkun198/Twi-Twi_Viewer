@@ -12,6 +12,7 @@ const maxStreams = 6;
 
 type DebugPlayerEntry = {
   channel: string;
+  displayName: string;
   playerSrc: string;
 };
 
@@ -58,23 +59,54 @@ function normalizeChannel(raw: string): string | null {
   return normalized;
 }
 
+function normalizeDisplayName(raw: unknown, fallback: string): string {
+  const normalized = String(raw ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (normalized || fallback).slice(0, 80);
+}
+
+function parseDisplayNames(params: URLSearchParams): string[] {
+  const raw = params.get("displayNames") ?? params.get("names");
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map((value) => String(value ?? ""));
+    }
+  } catch {
+    // Fall back to comma-separated names for manually crafted URLs.
+  }
+
+  return raw.split(",");
+}
+
 function parseChannels(params: URLSearchParams): ActiveStream[] {
   const values = [
     ...params.getAll("channels"),
     ...params.getAll("channel"),
   ];
   const unique = new Set<string>();
+  const displayNames = parseDisplayNames(params);
+  const streams: ActiveStream[] = [];
 
   for (const value of values) {
     for (const part of value.split(",")) {
       const channel = normalizeChannel(part);
-      if (channel) unique.add(channel);
+      if (channel && !unique.has(channel)) {
+        unique.add(channel);
+        streams.push({
+          channel,
+          displayName: normalizeDisplayName(displayNames[streams.length], channel),
+        });
+      }
       if (unique.size >= maxStreams) break;
     }
     if (unique.size >= maxStreams) break;
   }
 
-  return Array.from(unique).map((channel) => ({ channel }));
+  return streams;
 }
 
 function parseLayout(params: URLSearchParams): PlayerLayout {
@@ -156,12 +188,12 @@ async function writeClipboardText(value: string): Promise<void> {
 function DebugPanel({
   parentValues,
   playerEntries,
-  selectedChatChannel,
+  selectedChatDisplayName,
   selectedChatSrc,
 }: {
   parentValues: string[];
   playerEntries: DebugPlayerEntry[];
-  selectedChatChannel: string;
+  selectedChatDisplayName: string;
   selectedChatSrc: string;
 }) {
   const canonicalRedirect = CANONICAL_REDIRECT_ENABLED
@@ -203,7 +235,7 @@ function DebugPanel({
             <ul className="debug-src-list">
               {playerEntries.map((entry) => (
                 <li key={entry.channel}>
-                  <strong>{entry.channel}</strong>
+                  <strong>{entry.displayName}</strong>
                   <code className="debug-src">{entry.playerSrc}</code>
                 </li>
               ))}
@@ -217,7 +249,7 @@ function DebugPanel({
         <dd>
           {selectedChatSrc ? (
             <>
-              <strong>{selectedChatChannel}</strong>
+              <strong>{selectedChatDisplayName}</strong>
               <code className="debug-src">{selectedChatSrc}</code>
             </>
           ) : (
@@ -250,6 +282,13 @@ function App() {
     () => activeStreams.map((stream) => stream.channel),
     [activeStreams],
   );
+  const streamLabelMap = useMemo(
+    () =>
+      new Map(
+        activeStreams.map((stream) => [stream.channel, stream.displayName]),
+      ),
+    [activeStreams],
+  );
   const initialActive = normalizeChannel(initialParams.get("active") ?? "");
   const [chatChannel, setChatChannel] = useState(() =>
     initialActive && activeChannels.includes(initialActive)
@@ -259,10 +298,14 @@ function App() {
   const selectedChatChannel = activeChannels.includes(chatChannel)
     ? chatChannel
     : activeChannels[0] ?? "";
+  const selectedChatDisplayName = selectedChatChannel
+    ? streamLabelMap.get(selectedChatChannel) ?? selectedChatChannel
+    : "";
   const playerDebugEntries = useMemo<DebugPlayerEntry[]>(
     () =>
       activeStreams.map((stream) => ({
         channel: stream.channel,
+        displayName: stream.displayName,
         playerSrc: getPlayerUrl(stream.channel, muted),
       })),
     [activeStreams, muted],
@@ -279,10 +322,15 @@ function App() {
       parentValues,
       playerIframeSrc: playerDebugEntries.map((entry) => ({
         channel: entry.channel,
+        displayName: entry.displayName,
         src: entry.playerSrc,
       })),
       chatIframeSrc: selectedChatSrc
-        ? { channel: selectedChatChannel, src: selectedChatSrc }
+        ? {
+            channel: selectedChatChannel,
+            displayName: selectedChatDisplayName,
+            src: selectedChatSrc,
+          }
         : null,
       canonicalRedirect: {
         enabled: CANONICAL_REDIRECT_ENABLED,
@@ -292,7 +340,13 @@ function App() {
       },
       userAgent: window.navigator.userAgent,
     });
-  }, [parentValues, playerDebugEntries, selectedChatChannel, selectedChatSrc]);
+  }, [
+    parentValues,
+    playerDebugEntries,
+    selectedChatChannel,
+    selectedChatDisplayName,
+    selectedChatSrc,
+  ]);
 
   async function copyPlayerSrc(channel: string, playerSrc: string) {
     try {
@@ -352,7 +406,7 @@ function App() {
             <DebugPanel
               parentValues={parentValues}
               playerEntries={playerDebugEntries}
-              selectedChatChannel={selectedChatChannel}
+              selectedChatDisplayName={selectedChatDisplayName}
               selectedChatSrc={selectedChatSrc}
             />
           )}
@@ -378,16 +432,16 @@ function App() {
                     className="player-title"
                     type="button"
                     onClick={() => setChatChannel(entry.channel)}
-                    title={`Show ${entry.channel} chat`}
+                    title={`Show ${entry.displayName} chat`}
                   >
-                    {entry.channel}
+                    {entry.displayName}
                   </button>
                   <a
                     className="open-link"
                     href={`https://www.twitch.tv/${entry.channel}`}
                     target="_blank"
                     rel="noreferrer"
-                    title={`Open ${entry.channel} on Twitch`}
+                    title={`Open ${entry.displayName} on Twitch`}
                   >
                     Twitch
                   </a>
@@ -398,7 +452,7 @@ function App() {
                       onClick={() =>
                         void copyPlayerSrc(entry.channel, entry.playerSrc)
                       }
-                      title={`Copy ${entry.channel} player iframe src`}
+                      title={`Copy ${entry.displayName} player iframe src`}
                     >
                       {copiedChannel === entry.channel ? "Copied" : "Copy src"}
                     </button>
@@ -407,7 +461,7 @@ function App() {
                     className="close-button"
                     type="button"
                     onClick={() => removeStream(entry.channel)}
-                    aria-label={`Close ${entry.channel}`}
+                    aria-label={`Close ${entry.displayName}`}
                   >
                     x
                   </button>
@@ -450,7 +504,7 @@ function App() {
                 ) : (
                   activeChannels.map((channel) => (
                     <option key={channel} value={channel}>
-                      {channel}
+                      {streamLabelMap.get(channel) ?? channel}
                     </option>
                   ))
                 )}

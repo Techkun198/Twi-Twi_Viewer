@@ -7,4 +7,5 @@ export type PlayerLayout =
 
 export type ActiveStream = {
   channel: string;
+  displayName: string;
 };
