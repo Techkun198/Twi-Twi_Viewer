@@ -77,22 +77,43 @@ function parseMuted(params: URLSearchParams): boolean {
   return true;
 }
 
-function getPlayerUrl(channel: string, hostname: string, muted: boolean) {
+export function getTwitchEmbedParents(): string[] {
+  const host = window.location.hostname;
+  const parents = new Set<string>();
+
+  if (host) {
+    parents.add(host);
+  }
+
+  if (host === "localhost" || host === "127.0.0.1" || !host) {
+    parents.add("localhost");
+  }
+
+  return Array.from(parents);
+}
+
+export function buildTwitchParentQuery(): string {
+  return getTwitchEmbedParents()
+    .map((parent) => `parent=${encodeURIComponent(parent)}`)
+    .join("&");
+}
+
+function getPlayerUrl(channel: string, muted: boolean) {
   const params = new URLSearchParams({
     channel,
-    parent: hostname,
     muted: String(muted),
     autoplay: "true",
   });
+  const parentQuery = buildTwitchParentQuery();
 
-  return `https://player.twitch.tv/?${params.toString()}`;
+  return `https://player.twitch.tv/?${params.toString()}&${parentQuery}`;
 }
 
-function getChatUrl(channel: string, hostname: string) {
-  const params = new URLSearchParams({ parent: hostname });
+function getChatUrl(channel: string) {
+  const parentQuery = buildTwitchParentQuery();
   return `https://www.twitch.tv/embed/${encodeURIComponent(
     channel,
-  )}/chat?${params.toString()}`;
+  )}/chat?${parentQuery}`;
 }
 
 function App() {
@@ -108,7 +129,6 @@ function App() {
   );
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
   const muted = useMemo(() => parseMuted(initialParams), [initialParams]);
-  const hostname = window.location.hostname || "localhost";
 
   const activeChannels = useMemo(
     () => activeStreams.map((stream) => stream.channel),
@@ -206,7 +226,7 @@ function App() {
                 </div>
                 <iframe
                   title={`${stream.channel} player`}
-                  src={getPlayerUrl(stream.channel, hostname, muted)}
+                  src={getPlayerUrl(stream.channel, muted)}
                   allowFullScreen
                   allow="autoplay; fullscreen"
                 />
@@ -257,7 +277,7 @@ function App() {
               {selectedChatChannel ? (
                 <iframe
                   title={`${selectedChatChannel} chat`}
-                  src={getChatUrl(selectedChatChannel, hostname)}
+                  src={getChatUrl(selectedChatChannel)}
                   sandbox={chatSandbox}
                 />
               ) : (
