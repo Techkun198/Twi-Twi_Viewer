@@ -1,8 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import type { ActiveStream, PlayerLayout } from "./types";
+import {
+  CANONICAL_REDIRECT_ENABLED,
+  CANONICAL_VIEWER_HOST,
+  CLOUDFLARE_PAGES_HOST,
+  shouldRedirectToCanonical,
+} from "./viewerConfig";
 
 const maxStreams = 6;
+
+type DebugPlayerEntry = {
+  channel: string;
+  playerSrc: string;
+};
 
 const layoutOptions: { id: PlayerLayout; label: string }[] = [
   { id: "grid_equal", label: "Auto" },
@@ -77,6 +88,11 @@ function parseMuted(params: URLSearchParams): boolean {
   return true;
 }
 
+function parseDebug(params: URLSearchParams): boolean {
+  const raw = params.get("debug")?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 export function getTwitchEmbedParents(): string[] {
   const host = window.location.hostname;
   const parents = new Set<string>();
@@ -116,6 +132,103 @@ function getChatUrl(channel: string) {
   )}/chat?${parentQuery}`;
 }
 
+async function writeClipboardText(value: string): Promise<void> {
+  if (window.navigator.clipboard?.writeText) {
+    await window.navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function DebugPanel({
+  parentValues,
+  playerEntries,
+  selectedChatChannel,
+  selectedChatSrc,
+}: {
+  parentValues: string[];
+  playerEntries: DebugPlayerEntry[];
+  selectedChatChannel: string;
+  selectedChatSrc: string;
+}) {
+  const canonicalRedirect = CANONICAL_REDIRECT_ENABLED
+    ? `enabled (${CLOUDFLARE_PAGES_HOST} -> ${CANONICAL_VIEWER_HOST})`
+    : "disabled";
+
+  return (
+    <section className="debug-panel" aria-label="Twitch embed diagnostics">
+      <h2>Debug</h2>
+      <dl className="debug-grid">
+        <dt>current host</dt>
+        <dd>{window.location.hostname || "(empty)"}</dd>
+
+        <dt>origin</dt>
+        <dd>{window.location.origin}</dd>
+
+        <dt>href</dt>
+        <dd>
+          <code className="debug-src">{window.location.href}</code>
+        </dd>
+
+        <dt>parent values</dt>
+        <dd>{parentValues.join(", ") || "(none)"}</dd>
+
+        <dt>canonical redirect</dt>
+        <dd>
+          {canonicalRedirect}; active now:{" "}
+          {shouldRedirectToCanonical(window.location.hostname) ? "yes" : "no"}
+        </dd>
+
+        <dt>user agent</dt>
+        <dd>
+          <code className="debug-src">{window.navigator.userAgent}</code>
+        </dd>
+
+        <dt>player iframe src</dt>
+        <dd>
+          {playerEntries.length > 0 ? (
+            <ul className="debug-src-list">
+              {playerEntries.map((entry) => (
+                <li key={entry.channel}>
+                  <strong>{entry.channel}</strong>
+                  <code className="debug-src">{entry.playerSrc}</code>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            "(none)"
+          )}
+        </dd>
+
+        <dt>chat iframe src</dt>
+        <dd>
+          {selectedChatSrc ? (
+            <>
+              <strong>{selectedChatChannel}</strong>
+              <code className="debug-src">{selectedChatSrc}</code>
+            </>
+          ) : (
+            "(none)"
+          )}
+        </dd>
+      </dl>
+    </section>
+  );
+}
+
 function App() {
   const initialParams = useMemo(
     () => new URLSearchParams(window.location.search),
@@ -129,6 +242,9 @@ function App() {
   );
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
   const muted = useMemo(() => parseMuted(initialParams), [initialParams]);
+  const isDebugMode = useMemo(() => parseDebug(initialParams), [initialParams]);
+  const parentValues = useMemo(() => getTwitchEmbedParents(), []);
+  const [copiedChannel, setCopiedChannel] = useState<string | null>(null);
 
   const activeChannels = useMemo(
     () => activeStreams.map((stream) => stream.channel),
@@ -143,6 +259,52 @@ function App() {
   const selectedChatChannel = activeChannels.includes(chatChannel)
     ? chatChannel
     : activeChannels[0] ?? "";
+  const playerDebugEntries = useMemo<DebugPlayerEntry[]>(
+    () =>
+      activeStreams.map((stream) => ({
+        channel: stream.channel,
+        playerSrc: getPlayerUrl(stream.channel, muted),
+      })),
+    [activeStreams, muted],
+  );
+  const selectedChatSrc = selectedChatChannel
+    ? getChatUrl(selectedChatChannel)
+    : "";
+
+  useEffect(() => {
+    console.info("[Twi-Twi MultiViewer] Twitch embed diagnostics", {
+      href: window.location.href,
+      hostname: window.location.hostname,
+      origin: window.location.origin,
+      parentValues,
+      playerIframeSrc: playerDebugEntries.map((entry) => ({
+        channel: entry.channel,
+        src: entry.playerSrc,
+      })),
+      chatIframeSrc: selectedChatSrc
+        ? { channel: selectedChatChannel, src: selectedChatSrc }
+        : null,
+      canonicalRedirect: {
+        enabled: CANONICAL_REDIRECT_ENABLED,
+        sourceHost: CLOUDFLARE_PAGES_HOST,
+        targetHost: CANONICAL_VIEWER_HOST,
+        activeNow: shouldRedirectToCanonical(window.location.hostname),
+      },
+      userAgent: window.navigator.userAgent,
+    });
+  }, [parentValues, playerDebugEntries, selectedChatChannel, selectedChatSrc]);
+
+  async function copyPlayerSrc(channel: string, playerSrc: string) {
+    try {
+      await writeClipboardText(playerSrc);
+      setCopiedChannel(channel);
+      window.setTimeout(() => {
+        setCopiedChannel((current) => (current === channel ? null : current));
+      }, 1600);
+    } catch (error) {
+      console.warn("[Twi-Twi MultiViewer] Failed to copy iframe src", error);
+    }
+  }
 
   function removeStream(channel: string) {
     setActiveStreams((current) => {
@@ -157,33 +319,44 @@ function App() {
   return (
     <div className="app-shell" data-right-collapsed={isRightCollapsed}>
       <main className="workspace">
-        <header className="toolbar">
-          <div>
-            <p className="eyebrow">
-              Watching {activeStreams.length} / {maxStreams}
-            </p>
-            <h1>Twi-Twi Multi Viewer</h1>
-          </div>
-
-          <div className="toolbar-actions">
-            <div className="layout-switcher" aria-label="Layout">
-              {layoutOptions.map((option) => (
-                <button
-                  className="layout-button"
-                  data-active={layout === option.id}
-                  key={option.id}
-                  type="button"
-                  onClick={() => setLayout(option.id)}
-                >
-                  {option.label}
-                </button>
-              ))}
+        <div className="top-stack">
+          <header className="toolbar">
+            <div>
+              <p className="eyebrow">
+                Watching {activeStreams.length} / {maxStreams}
+              </p>
+              <h1>Twi-Twi Multi Viewer</h1>
             </div>
-            <span className="muted-state">
-              Initial audio: {muted ? "muted" : "unmuted"}
-            </span>
-          </div>
-        </header>
+
+            <div className="toolbar-actions">
+              <div className="layout-switcher" aria-label="Layout">
+                {layoutOptions.map((option) => (
+                  <button
+                    className="layout-button"
+                    data-active={layout === option.id}
+                    key={option.id}
+                    type="button"
+                    onClick={() => setLayout(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <span className="muted-state">
+                Initial audio: {muted ? "muted" : "unmuted"}
+              </span>
+            </div>
+          </header>
+
+          {isDebugMode && (
+            <DebugPanel
+              parentValues={parentValues}
+              playerEntries={playerDebugEntries}
+              selectedChatChannel={selectedChatChannel}
+              selectedChatSrc={selectedChatSrc}
+            />
+          )}
+        </div>
 
         <section
           className={`player-area layout-${layout}`}
@@ -195,38 +368,53 @@ function App() {
               <p>Open with ?channels=channel_a,channel_b</p>
             </div>
           ) : (
-            activeStreams.map((stream) => (
-              <article className="player-slot" key={stream.channel}>
-                <div className="player-header">
+            playerDebugEntries.map((entry) => (
+              <article className="player-slot" key={entry.channel}>
+                <div
+                  className="player-header"
+                  data-debug={isDebugMode ? "true" : "false"}
+                >
                   <button
                     className="player-title"
                     type="button"
-                    onClick={() => setChatChannel(stream.channel)}
-                    title={`Show ${stream.channel} chat`}
+                    onClick={() => setChatChannel(entry.channel)}
+                    title={`Show ${entry.channel} chat`}
                   >
-                    {stream.channel}
+                    {entry.channel}
                   </button>
                   <a
                     className="open-link"
-                    href={`https://www.twitch.tv/${stream.channel}`}
+                    href={`https://www.twitch.tv/${entry.channel}`}
                     target="_blank"
                     rel="noreferrer"
-                    title={`Open ${stream.channel} on Twitch`}
+                    title={`Open ${entry.channel} on Twitch`}
                   >
                     Twitch
                   </a>
+                  {isDebugMode && (
+                    <button
+                      className="debug-copy-button"
+                      type="button"
+                      onClick={() =>
+                        void copyPlayerSrc(entry.channel, entry.playerSrc)
+                      }
+                      title={`Copy ${entry.channel} player iframe src`}
+                    >
+                      {copiedChannel === entry.channel ? "Copied" : "Copy src"}
+                    </button>
+                  )}
                   <button
                     className="close-button"
                     type="button"
-                    onClick={() => removeStream(stream.channel)}
-                    aria-label={`Close ${stream.channel}`}
+                    onClick={() => removeStream(entry.channel)}
+                    aria-label={`Close ${entry.channel}`}
                   >
                     x
                   </button>
                 </div>
                 <iframe
-                  title={`${stream.channel} player`}
-                  src={getPlayerUrl(stream.channel, muted)}
+                  title={`${entry.channel} player`}
+                  src={entry.playerSrc}
                   allowFullScreen
                   allow="autoplay; fullscreen"
                 />

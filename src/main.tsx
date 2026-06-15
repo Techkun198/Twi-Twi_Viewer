@@ -2,11 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { CANONICAL_VIEWER_HOST, shouldRedirectToCanonical } from './viewerConfig.ts'
 
-const CANONICAL_VIEWER_HOST = 'viewer.twi-twi.com'
-const CLOUDFLARE_PAGES_HOST = 'twi-twi-viewer.pages.dev'
-
-if (window.location.hostname === CLOUDFLARE_PAGES_HOST) {
+if (shouldRedirectToCanonical(window.location.hostname)) {
   const nextUrl = new URL(window.location.href)
   nextUrl.protocol = 'https:'
   nextUrl.hostname = CANONICAL_VIEWER_HOST
